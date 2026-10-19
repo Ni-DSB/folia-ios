@@ -51,13 +51,13 @@ jobs:
         run: |
           set -euo pipefail
           test -d dist || { echo "dist 缺失"; exit 1; }
-          # 引擎必须进包，否则 App 里插件源整个不可用
-          if grep -rl "customSourceEngine" dist/assets >/dev/null 2>&1; then
-            echo "✓ 应用内引擎已打进产物"
-          else
-            echo "✗ 产物里找不到应用内引擎" >&2
-            exit 1
-          fi
+          # 引擎必须进包，否则 App 里插件源整个不可用。
+          # 判据用「动态 import 生成的独立 chunk」+「模块表里的字面量」：打包后源码路径不保留，
+          # 但字符串字面量保留（"Cannot find module" 来自 moduleTable 的解析失败分支）。
+          ls dist/assets/engine-*.js >/dev/null 2>&1 || { echo "✗ 没找到引擎 chunk（engine-*.js）" >&2; exit 1; }
+          grep -rl "Cannot find module" dist/assets >/dev/null 2>&1 || { echo "✗ 引擎 chunk 里找不到模块表特征" >&2; exit 1; }
+          echo "✓ 应用内引擎已打进产物"
+          ls -la dist/assets/engine-*.js
 
       - name: Install Capacitor (iOS)
         run: npm install --no-save @capacitor/core@8 @capacitor/cli@8 @capacitor/ios@8
