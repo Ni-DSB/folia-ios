@@ -13,8 +13,15 @@ name: Build iOS IPA (unsigned)
 on:
   workflow_dispatch:
   push:
-    branches: [ios-ipa]
-    paths: ['.github/workflows/ios-ipa.yml', 'deploy/ios/**']
+    # 推到这两个分支都构建：main 是仓库默认分支，ios-ipa 留给专门试打包的分支。
+    branches: [main, ios-ipa]
+    paths:
+      - '.github/workflows/ios-ipa.yml'
+      - 'deploy/ios/**'
+      - 'src/services/onlineMusic/customSourceEngine/**'
+      - 'src/services/onlineMusic/customSource/**'
+      - 'package.json'
+      - 'vite.config.ts'
 
 jobs:
   build:
