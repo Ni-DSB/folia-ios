@@ -1,4 +1,4 @@
-# 推到自己的 GitHub 仓库（触发 iOS 构建）
+﻿# 推到自己的 GitHub 仓库（触发 iOS 构建）
 #
 # 用法：
 #   .\deploy\ios\push-to-github.ps1 -RepoUrl https://github.com/你的用户名/你的仓库.git
