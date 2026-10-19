@@ -62,7 +62,8 @@
     "contributors:add": "npx all-contributors-cli add",
     "contributors:generate": "npx all-contributors-cli generate",
     "models:fetch": "node build/fetchModels.mjs",
-    "manual:ai-probe": "node test/manual/ai_probe.mjs"
+    "manual:ai-probe": "node test/manual/ai_probe.mjs",
+    "build:ios": "cross-env VITE_CUSTOM_SOURCE_ENGINE=local VITE_PLATFORM_AUDIO_PROXY= npm run build"
   },
   "build": {
     "appId": "top.izuna.foliamajor",

@@ -41,9 +41,41 @@ const hasDesktopBridge = () => (
     typeof window !== 'undefined' && typeof window.electron?.customSourceRequest === 'function'
 );
 
+// ─── 应用内引擎（iOS / 独立 App 构建）─────────────────────────────────────────
+//
+// 打包成 App 时既没有 Electron 主进程，也不一定有自托管服务端；引擎就跑在 WebView 自己里面
+// （src/services/onlineMusic/customSourceEngine/）。三种宿主按这个顺序选：
+//   1. 桌面版：走 Electron 主进程的桥
+//   2. 自托管网页版：走服务端 HTTP 接口
+//   3. 独立 App：跑应用内引擎
+// 构建时用 VITE_CUSTOM_SOURCE_ENGINE=local 选第 3 种；动态 import 保证桌面/网页构建不会把
+// 引擎打进包里。
+const isLocalEngineBuild = (): boolean => {
+    const env = (import.meta as ImportMeta & { env?: Record<string, string> }).env;
+    return env?.VITE_CUSTOM_SOURCE_ENGINE === 'local';
+};
+
+let localEnginePromise: Promise<any> | null = null;
+
+/** 应用内引擎，首次调用时才加载并 start（插件是异步读出来的）。 */
+const getLocalEngine = (): Promise<any> => {
+    if (!localEnginePromise) {
+        localEnginePromise = import('../customSourceEngine/engine.js').then(async (module: any) => {
+            const system = module.createCustomSourceSystem({ log: console });
+            await system.start();
+            return system;
+        }).catch((error: unknown) => {
+            // 失败后允许下次重试，否则一次加载失败会让插件源永久不可用。
+            localEnginePromise = null;
+            throw error;
+        });
+    }
+    return localEnginePromise;
+};
+
 /** Whether this page can reach the engine at all. */
 export const getCustomSourceTransportAvailability = () => (
-    hasDesktopBridge() || getHttpBase()
+    hasDesktopBridge() || isLocalEngineBuild() || getHttpBase()
         ? { configured: true } as const
         : { configured: false, reason: 'runtime-unavailable' } as const
 );
@@ -61,6 +93,9 @@ export async function requestCustomSource<T = unknown>(
     try {
         if (hasDesktopBridge()) {
             result = await window.electron!.customSourceRequest(operation, params) as CustomSourceResult<T>;
+        } else if (isLocalEngineBuild()) {
+            const engine = await getLocalEngine();
+            result = await engine.request(operation, params) as CustomSourceResult<T>;
         } else {
             const base = getHttpBase();
             if (!base) throw new Error(CUSTOM_SOURCE_NEEDS_DESKTOP);

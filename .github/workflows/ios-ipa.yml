@@ -2,39 +2,26 @@ name: Build iOS IPA (unsigned)
 
 # 产出未签名 Folia.ipa：签名由使用者自行完成（Sideloadly / AltStore / 自备证书）。
 #
-# 为什么在 macOS runner 上跑：xcodebuild 只有 macOS 有。公开仓库用 GitHub 的 macOS runner
-# 不额外计费，所以无需自备 Mac。
+# 这一版是「独立 App」：插件引擎跑在 App 自己的 WebView 里
+# （src/services/onlineMusic/customSourceEngine/），不再需要电脑上跑服务端。
+#   · 前端 dist 直接打进 App
+#   · 插件经 CapacitorHttp 发请求（原生实现：可带 Referer/User-Agent，且不受 CORS 约束）
+#   · 插件列表存在 App 内的 IndexedDB
 #
-# 关键架构：App 的 WebView 直接加载自托管服务端（FOLIA_SERVER_URL）。二创的全部功能——
-# 插件音源引擎、网易云/酷狗/QQ 后端、音频代理——都跑在那台电脑上，iOS 里没有 Node，App 只能连它。
-# 这样相对路径天然正确、没有 CORS 问题，改前端也不用重新打包签名。
-#
-# 前提：FOLIA_SERVER_URL 必须是**固定地址**（Tailscale 的 100.x，或自有域名），
-# 否则隧道每次重启就变，App 会连不上。
+# 为什么在 macOS runner 上跑：xcodebuild 只有 macOS 有；公开仓库用它不额外计费，无需自备 Mac。
 
 on:
   workflow_dispatch:
-    inputs:
-      server_url:
-        description: '自托管服务端地址（如 http://100.119.115.88:8081 或 https://folia.example.com）'
-        required: true
-        type: string
-      allow_http:
-        description: '服务端是 http 协议（Tailscale/局域网需要勾选）'
-        required: false
-        default: 'true'
-        type: choice
-        options: ['true', 'false']
   push:
     branches: [ios-ipa]
-    paths: ['deploy/ios/**', '.github/workflows/ios-ipa.yml']
+    paths: ['.github/workflows/ios-ipa.yml', 'deploy/ios/**']
 
 jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 60
     env:
-      # 跳过 Electron 二进制下载：只构建 Web 产物，不需要桌面端运行时。
+      # 只构建 Web 产物，不需要桌面端运行时。
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v4
@@ -47,44 +34,45 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build web bundle
-        run: npm run build
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build web bundle (in-app plugin engine)
+        run: npm run build:ios
+
+      - name: Verify engine is bundled
+        run: |
+          set -euo pipefail
+          test -d dist || { echo "dist 缺失"; exit 1; }
+          # 引擎必须进包，否则 App 里插件源整个不可用
+          if grep -rl "customSourceEngine" dist/assets >/dev/null 2>&1; then
+            echo "✓ 应用内引擎已打进产物"
+          else
+            echo "✗ 产物里找不到应用内引擎" >&2
+            exit 1
+          fi
 
       - name: Install Capacitor (iOS)
         run: npm install --no-save @capacitor/core@8 @capacitor/cli@8 @capacitor/ios@8
 
       - name: Write Capacitor config
-        env:
-          FOLIA_SERVER_URL: ${{ inputs.server_url }}
-          FOLIA_ALLOW_HTTP: ${{ inputs.allow_http }}
         run: |
           set -euo pipefail
-          # 本地触发（push 分支）时 inputs 为空，回落到仓库变量。
-          if [ -z "${FOLIA_SERVER_URL:-}" ]; then
-            echo "server_url 为空：需要手动 Run workflow 并提供地址" >&2
-            exit 1
-          fi
           node -e '
             const fs = require("fs");
-            const url = process.env.FOLIA_SERVER_URL.trim();
-            new URL(url); // 非法地址直接失败，别等到 Cap sync 才报
             const cfg = {
               appId: "top.izuna.foliamajor",
               appName: "Folia",
               webDir: "dist",
-              server: {
-                url,
-                cleartext: process.env.FOLIA_ALLOW_HTTP === "true",
-                allowNavigation: [new URL(url).host, "*.trycloudflare.com"],
-              },
-              ios: { limitsNavigationsToAppBoundDomains: false, contentInset: "never" },
+              ios: { contentInset: "never", limitsNavigationsToAppBoundDomains: false },
               plugins: {
+                CapacitorHttp: { enabled: true },
                 SplashScreen: { launchAutoHide: true, launchShowDuration: 600, backgroundColor: "#09090b", showSpinner: false },
                 StatusBar: { overlaysWebView: true, style: "LIGHT", backgroundColor: "#09090b" },
               },
             };
             fs.writeFileSync("capacitor.config.json", JSON.stringify(cfg, null, 2));
-            console.log("capacitor.config.json:\n" + JSON.stringify(cfg, null, 2));
+            console.log(JSON.stringify(cfg, null, 2));
           '
 
       - name: Add iOS platform
@@ -93,37 +81,32 @@ jobs:
       - name: Sync web assets
         run: npx cap sync ios
 
-      - name: Allow cleartext HTTP (ATS)
-        env:
-          FOLIA_ALLOW_HTTP: ${{ inputs.allow_http }}
+      - name: Configure Info.plist
         run: |
           set -euo pipefail
           PLIST="ios/App/App/Info.plist"
-          if [ "${FOLIA_ALLOW_HTTP:-true}" = "true" ]; then
-            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST" 2>/dev/null \
-              || /usr/libexec/PlistBuddy -c "Set :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
-          fi
-          # 后台音频：WebView 播放在锁屏后不被挂起需要它
+          # 插件会请求 http 接口（部分源站只有 http），ATS 需要放开。
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Set :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
+          # 后台播放：锁屏后不被挂起
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -40
+          /usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"
 
       - name: Build unsigned .app
         working-directory: ios/App
         run: |
           set -euo pipefail
-          TARGET=$(ls -d App.xcworkspace 2>/dev/null || true)
-          if [ -n "$TARGET" ]; then
+          if [ -d App.xcworkspace ]; then
             xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
               -sdk iphoneos -derivedDataPath build \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-              build
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
           else
             xcodebuild -project App.xcodeproj -scheme App -configuration Release \
               -sdk iphoneos -derivedDataPath build \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-              build
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
           fi
 
       - name: Package into .ipa
@@ -134,10 +117,10 @@ jobs:
           rm -rf Payload Folia.ipa
           mkdir -p Payload
           cp -R "$APP" Payload/
-          # ipa 就是一个含 Payload/ 目录的 zip
+          # ipa 就是含 Payload/ 的 zip
           zip -qry Folia.ipa Payload
           ls -lh Folia.ipa
-          unzip -l Folia.ipa | head -15
+          du -sh Payload/App.app
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
