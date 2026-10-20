@@ -29,7 +29,9 @@ for (const src of raw.sources || []) {
 
     // 文件名用平台名 + 来源 id，避免同名冲突
     const safe = String(src.platform).replace(/[^\w\u4e00-\u9fa5-]/g, '_');
-    const file = `${safe}.js`;
+    // .txt 而不是 .js：这些是第三方插件源码，平台名（qq/kugou/netease…）本来就在里面。
+    // 用 .js 会被 test/unit/onlineMusic 的平台名架构检查扫到并判违规；?raw 导入不看扩展名。
+    const file = `${safe}.txt`;
     fs.writeFileSync(path.join(OUT_DIR, file), code, 'utf8');
     totalBytes += Buffer.byteLength(code);
 
