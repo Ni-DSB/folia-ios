@@ -131,6 +131,8 @@ console.log('点播放前 proxyCalls:', proxyCalls);
 
 const count = await page.locator('button[aria-label="播放歌曲"]').count();
 console.log('结果数:', count);
+console.log('=== 引擎日志 ===');
+[...new Set(logs)].filter(l => /CustomSource/.test(l)).slice(0, 15).forEach(l => console.log('  ' + l));
 if (count) {
     await page.locator('button[aria-label="播放歌曲"]').first().click({ timeout: 15000 }).catch(e => console.log('点击失败:', e.message.split('\n')[0]));
 }

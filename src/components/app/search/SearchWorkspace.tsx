@@ -4,7 +4,7 @@ import { AlertCircle, Loader2, Search, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import type { Theme, UnifiedSong } from '../../../types';
-import type { MediaId } from '../../../types/onlineMusic';
+import type { MediaId, OnlineProviderId } from '../../../types/onlineMusic';
 import {
     type SearchSource,
     useSearchNavigationStore,
@@ -94,10 +94,52 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                 && (summary.requiresAccount === false || accountStatuses[summary.providerId]?.status === 'authenticated')
                 && omni.getProviderCapabilities(summary.providerId).search)
             .map(summary => summary.providerId as SearchSource);
-        const withActive = online.includes(activeOnlineProviderId) ? online : [activeOnlineProviderId, ...online];
-        return [...withActive, 'local', 'navidrome'];
+        // 标签顺序 = 实际点开的顺序。插件源免登录、一定搜得出东西，所以排在前面；把「当前平台」
+        // 放第一只有在它真能用时才有意义——独立 App 里当前平台往往正是那个没后端的，放第一会让
+        // 人一进来看到「未找到相关结果」，以为搜索坏了。
+        const currentIsUsable = online.includes(activeOnlineProviderId);
+        const rest = online.filter(id => id !== activeOnlineProviderId);
+        const ordered = currentIsUsable ? [activeOnlineProviderId, ...rest] : rest;
+        return [...ordered, 'local', 'navidrome'];
     }, [accountStatuses, activeOnlineProviderId, providerRegistryVersion]);
     const hasCollection = useCollectionNavigationStore(state => Boolean(state.snapshot?.stack.length));
+    /**
+     * 提交搜索时选哪个源。
+     *
+     * 当前标签不可用时（典型：独立 App 的默认标签是那个没后端的平台，用户也从没点过别的）
+     * 自动改用第一个可用源——否则用户一搜就是「未找到相关结果」，以为搜索坏了。
+     * 本地/Navidrome 是用户主动选的，永远照用。
+     *
+     * 判断直接看 omni 的能力而不是 `sources` 数组：`sources` 依赖注册表版本，注册表在内置源装完
+     * 才刷新，首屏那一刻它还是旧的——用它会漏判。
+     */
+    const resolveSubmitSource = (explicit?: SearchSource): SearchSource | undefined => {
+        const wanted = explicit ?? searchSourceTab;
+        if (wanted === 'local' || wanted === 'navidrome') return explicit;
+
+        const isUsable = (id: SearchSource): boolean => {
+            if (id === 'local' || id === 'navidrome') return true;
+            try {
+                const summary = omni.getProviderSummaries().find(item => item.providerId === id);
+                if (!summary) return false;
+                if (summary.availability.configured === false || summary.availability.reason === 'runtime-unavailable') return false;
+                if (summary.requiresAccount !== false) return false;
+                return omni.getProviderCapabilities(id as OnlineProviderId).search;
+            } catch {
+                return false;
+            }
+        };
+
+        if (isUsable(wanted)) return explicit;
+        const fallback = sources.find(id => id !== 'local' && id !== 'navidrome' && isUsable(id));
+        return fallback ?? explicit;
+    };
+
+    const submitWithResolvedSource = (explicit?: SearchSource) => {
+        const resolved = resolveSubmitSource(explicit);
+        if (resolved && resolved !== explicit) onSubmitSearch(resolved);
+        else onSubmitSearch(explicit);
+    };
     const getSourceLabel = (source: SearchSource) => {
         if (source === 'local') return t('search.sourceLocal');
         if (source === 'navidrome') return t('search.sourceNavidrome');
@@ -140,7 +182,7 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                 }`}
                                 onSubmit={(event) => {
                                     event.preventDefault();
-                                    onSubmitSearch();
+                                    submitWithResolvedSource();
                                 }}
                             >
                                 {isSearching ? (
@@ -207,7 +249,7 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                 <p>{t('search.error')}</p>
                                 <button
                                     type="button"
-                                    onClick={() => onSubmitSearch()}
+                                    onClick={() => submitWithResolvedSource()}
                                     className="rounded-full border border-current/15 px-4 py-2 text-sm"
                                 >
                                     {t('search.retry')}

@@ -56,6 +56,30 @@ const isLocalEngineBuild = (): boolean => {
 };
 
 let localEnginePromise: Promise<any> | null = null;
+/** 内置音源的补装只跑一次（含失败），避免每次请求都重试读 3 MB 脚本。 */
+let bundledSourcesPromise: Promise<void> | null = null;
+
+/** 补装随包内置的音源，装完广播一个事件让注册表重读。失败只记日志，不影响引擎可用。 */
+const ensureBundledSources = (system: any): Promise<void> => {
+    if (!bundledSourcesPromise) {
+        bundledSourcesPromise = import('../customSourceEngine/bundledSources')
+            .then(({ installBundledSourcesIfEmpty }) => installBundledSourcesIfEmpty(system))
+            .then((count) => {
+                console.log(`[CustomSource] 内置源结果: 本次装 ${count} 个`);
+                // 通过事件而不是直接 import 注册表：registry → transport → registry 会形成环形依赖，
+                // 在 ESM 里可能拿到未初始化的模块，表现为「装完了但没有下一步」。
+                try {
+                    window.dispatchEvent(new CustomEvent('folia:custom-sources-installed', { detail: { count } }));
+                } catch (error) {
+                    console.warn('[CustomSource] 广播安装完成事件失败', error);
+                }
+            })
+            .catch((error: unknown) => {
+                console.warn('[CustomSource] 内置音源安装失败', error);
+            });
+    }
+    return bundledSourcesPromise;
+};
 
 /** 应用内引擎，首次调用时才加载并 start（插件是异步读出来的）。 */
 const getLocalEngine = (): Promise<any> => {
@@ -63,21 +87,14 @@ const getLocalEngine = (): Promise<any> => {
         localEnginePromise = import('../customSourceEngine/engine.js').then(async (module: any) => {
             const system = module.createCustomSourceSystem({ log: console });
             await system.start();
-            // 首次启动时装上随包内置的音源（存储为空时才动手）。后台跑，不挡住首个请求；
-            // 装完调一次注册表同步，搜索标签与设置页才会出现这些源。
-            import('../customSourceEngine/bundledSources')
-                .then(({ installBundledSourcesIfEmpty }) => installBundledSourcesIfEmpty(system))
-                .then(async (count: number) => {
-                    if (count <= 0) return;
-                    console.log(`[CustomSource] 已内置 ${count} 个音源`);
-                    const registry = await import('./customSourceRegistry');
-                    await registry.syncCustomSourceProviders();
-                })
-                .catch((error: unknown) => console.warn('[CustomSource] 内置音源安装失败', error));
+            // 首次启动时装上随包内置的音源。await 它：调用方拿到的列表要包含这些源，
+            // 否则第一次请求会看到空列表、界面显示"没有音源"。
+            await ensureBundledSources(system);
             return system;
         }).catch((error: unknown) => {
             // 失败后允许下次重试，否则一次加载失败会让插件源永久不可用。
             localEnginePromise = null;
+            bundledSourcesPromise = null;
             throw error;
         });
     }
@@ -134,3 +151,18 @@ export async function listCustomSources(): Promise<CustomSourceEntry[]> {
     const result = await requestCustomSource<CustomSourceEntry[]>('list');
     return result.ok ? (result.data ?? []) : [];
 }
+
+/**
+ * 启动时预热应用内引擎（只在 local 构建里有效）。
+ *
+ * 为什么要它：内置源要装进 IndexedDB、注册表要重读，两步都是异步的；而界面在应用启动几十毫秒
+ * 后就去读 provider 列表了。不预热的话，那次读到的必然是空列表，之后没有任何东西再触发重读——
+ * 表现为「源明明装上了，但搜索标签里一个都没有」，且只在真机上出现（浏览器里首次请求来得晚，
+ * 恰好赶上了）。
+ */
+export const warmCustomSourceEngine = (): void => {
+    if (!isLocalEngineBuild() || hasDesktopBridge()) return;
+    void getLocalEngine().catch((error: unknown) => {
+        console.warn('[CustomSource] 预热引擎失败', error);
+    });
+};

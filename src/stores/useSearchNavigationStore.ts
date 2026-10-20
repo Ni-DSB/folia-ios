@@ -164,7 +164,39 @@ const executeSearch = async (
         return searchNavidromeSongs(query);
     }
 
-    return searchOnlineProviderSongs(sourceTab, query, limit, offset);
+    // 目标源搜不了（独立 App 里默认标签是那个没后端的平台）就换第一个能搜的在线源。
+    // 放在这个唯一入口而不是界面上：搜索有三条触发路径（回车、按钮、标签点击），
+    // 界面层只覆盖到一部分，漏掉的那条会让用户看到「未找到相关结果」。
+    const usableTab = isOnlineProviderSearchable(sourceTab) ? sourceTab : firstSearchableOnlineProvider();
+    return searchOnlineProviderSongs(usableTab ?? sourceTab, query, limit, offset);
+};
+
+/** 该在线源现在能不能搜：有后端、且不需要账号（插件源免登录）。 */
+const isOnlineProviderSearchable = (providerId: OnlineProviderId): boolean => {
+    try {
+        const summary = omni.getProviderSummaries().find(item => item.providerId === providerId);
+        if (!summary) return false;
+        if (summary.availability.configured === false || summary.availability.reason === 'runtime-unavailable') return false;
+        if (summary.requiresAccount !== false) return false;
+        return omni.getProviderCapabilities(providerId).search;
+    } catch {
+        return false;
+    }
+};
+
+/** 第一个能搜的在线源（按注册顺序）；没有则 null。 */
+const firstSearchableOnlineProvider = (): OnlineProviderId | null => {
+    try {
+        const found = omni.getProviderSummaries().find(summary => (
+            summary.availability.configured !== false
+            && summary.availability.reason !== 'runtime-unavailable'
+            && summary.requiresAccount === false
+            && omni.getProviderCapabilities(summary.providerId).search
+        ));
+        return (found?.providerId as OnlineProviderId) ?? null;
+    } catch {
+        return null;
+    }
 };
 
 const getInitialHomeViewTab = (): HomeViewTab => {

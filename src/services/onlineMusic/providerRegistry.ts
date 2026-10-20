@@ -119,7 +119,16 @@ registerOnlineMusicProvider(spotifyProvider);
  *
  * A failure here must not keep the built-in providers from working, so it is logged and dropped:
  * the source switcher then shows only the platforms Folia ships with.
+ *
+ * 独立 App 构建还要预热应用内引擎：内置源要先装进 IndexedDB 再注册，而界面在启动时就读了列表。
+ * 不预热的话那次读到空列表，之后没人再触发重读——源在库里、界面上却一个都没有。
  */
+void import('./customSource/customSourceTransport')
+    .then(transport => transport.warmCustomSourceEngine())
+    .catch(error => {
+        console.warn('[OnlineMusic] warming the custom source engine failed', error);
+    });
+
 void import('./customSource/customSourceRegistry')
     .then(module => module.syncCustomSourceProviders())
     .catch(error => {
