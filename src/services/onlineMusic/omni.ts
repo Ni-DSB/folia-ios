@@ -51,7 +51,12 @@ import {
 import { saveProviderAccountSnapshot } from './providerAccountCache';
 import { applyOmniAudioHook, applyOmniLyricsHook } from '../hostExtensionHooks';
 import { createLikePresses } from '../../utils/likePresses';
-import type { LikePress, LikePresses } from '../../utils/likePresses';
+import type { LikePress, LikePresses, LikeOutcome } from '../../utils/likePresses';
+import {
+    addLocalFavorite,
+    isLocallyFavorited,
+    removeLocalFavorite,
+} from './localFavorites';
 import { noteLoginFailure } from './login/loginFailureCase';
 import { noteOnlineFailure } from './failure/onlineFailureCase';
 import { diagnosticLine } from './login/loginDiagnosticReport';
@@ -188,6 +193,10 @@ const persistProviderLikedSongIds = async (providerId: OmniProviderId): Promise<
         console.warn('[Omni] Failed to persist liked songs after a like mutation', { providerId }, error);
     }
 };
+
+// 插件源（custom.*）没有平台账号，收藏只能存在本机。这个判断决定收藏按钮走哪条路：
+// 是调平台的 likeSong，还是写本地存储。桌面版与自托管版里插件源同样适用。
+const isLocalFavoriteProvider = (providerId: string): boolean => String(providerId).startsWith('custom.');
 
 // The presses on hearts (likePresses.ts), one provider's songs apart from another's. What is
 // wanted for a song whose request is not settled goes into the account store (`wantedLikes`),
@@ -442,6 +451,11 @@ export const omni = {
         const source = getPlaybackSourceRef(song);
         if (source.kind !== 'online') return false;
 
+        // 插件源：心形状态来自本地收藏，与平台账号无关。
+        if (isLocalFavoriteProvider(source.providerId)) {
+            return isLocallyFavorited(source.providerId, song);
+        }
+
         const account = useOnlineProviderAccountStore.getState().accounts[source.providerId];
         const songKey = String(source.mediaId);
         const wanted = account?.wantedLikes?.[songKey];
@@ -653,6 +667,9 @@ export const omni = {
         const source = getPlaybackSourceRef(song);
         if (source.kind !== 'online') return false;
         const provider = getOnlineMusicProvider(source.providerId);
+        // 插件源没有平台收藏接口，但它能进「本地收藏」——所以我提供的收藏按钮对它们同样可用。
+        // 具体是不是本地实现，由 likeSong/unlikeSong 自己分流，界面只需要知道「能不能点」。
+        if (isLocalFavoriteProvider(source.providerId)) return true;
         return providerSupports(provider, 'mutations')
             && providerSupports(provider, 'likes')
             && Boolean(provider?.mutations?.likeSong);
@@ -1033,6 +1050,16 @@ export const omni = {
         // canLikeSong 已经保证了这一点，这里只是把类型收窄；真走到就说明上面的判断被绕过了。
         const source = getPlaybackSourceRef(song);
         if (source.kind !== 'online') return unsupported(provider.id, 'likes');
+
+        // 插件源走本地收藏：没有平台接口可调，直接写本地存储，然后按成功返回。
+        // 这样心形按钮、收藏列表、命令面板的行为与登录平台一致，区别只是存在本机。
+        if (isLocalFavoriteProvider(source.providerId)) {
+            const want = liked ?? !isLocallyFavorited(source.providerId, song);
+            if (want) addLocalFavorite(source.providerId, song);
+            else removeLocalFavorite(source.providerId, song);
+            const done: Promise<LikeOutcome> = Promise.resolve({ ok: true, liked: want });
+            return { wanted: want, joined: false, settled: done };
+        }
 
         const press = likePressesOf(source.providerId).press(
             String(source.mediaId),

@@ -63,6 +63,17 @@ const getLocalEngine = (): Promise<any> => {
         localEnginePromise = import('../customSourceEngine/engine.js').then(async (module: any) => {
             const system = module.createCustomSourceSystem({ log: console });
             await system.start();
+            // 首次启动时装上随包内置的音源（存储为空时才动手）。后台跑，不挡住首个请求；
+            // 装完调一次注册表同步，搜索标签与设置页才会出现这些源。
+            import('../customSourceEngine/bundledSources')
+                .then(({ installBundledSourcesIfEmpty }) => installBundledSourcesIfEmpty(system))
+                .then(async (count: number) => {
+                    if (count <= 0) return;
+                    console.log(`[CustomSource] 已内置 ${count} 个音源`);
+                    const registry = await import('./customSourceRegistry');
+                    await registry.syncCustomSourceProviders();
+                })
+                .catch((error: unknown) => console.warn('[CustomSource] 内置音源安装失败', error));
             return system;
         }).catch((error: unknown) => {
             // 失败后允许下次重试，否则一次加载失败会让插件源永久不可用。
