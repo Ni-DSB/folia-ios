@@ -215,7 +215,11 @@ export const PlatformColumn: React.FC<PlatformColumnProps> = ({ rows, chosenId, 
                         : <React.Fragment key={row.providerId}>{item}</React.Fragment>;
                 })}
                 {shown.length === 0 && (
-                    <p className="py-6 text-center text-[13px] text-[color:var(--st-t3)]">{t('login.noPlatformMatch')}</p>
+                    <p className="py-6 text-center text-[13px] text-[color:var(--st-t3)]">
+                        {/* 一个平台都没有（独立 App：官方平台的后端不存在）和「搜索没匹配」是两回事，
+                            前者要告诉用户改用搜索框，后者只是换个词再搜。 */}
+                        {rows.length === 0 ? t('login.standaloneNoPlatforms') : t('login.noPlatformMatch')}
+                    </p>
                 )}
             </div>
         </div>

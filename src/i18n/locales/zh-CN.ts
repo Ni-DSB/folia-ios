@@ -1309,6 +1309,7 @@ export default {
     "choosePlatform": "选择平台",
     "searchPlatforms": "搜索平台",
     "noPlatformMatch": "没有匹配的平台",
+    "standaloneNoPlatforms": "这个版本没有平台账号可登录（网易云/酷狗/QQ 的后端需要电脑或自托管服务）。直接点搜索框搜歌即可——音源插件已经内置，顶部标签切换不同来源。",
     "rowSignedIn": "已登录",
     "rowRanOut": "登录已过期",
     "rowSignedOut": "未登录",

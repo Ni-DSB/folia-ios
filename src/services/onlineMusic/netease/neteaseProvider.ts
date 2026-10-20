@@ -278,7 +278,16 @@ export const neteaseProvider: OnlineMusicProvider = {
     mark: { letter: '云', color: '#dc2626' },
     watch: watchNeteaseLocalService,
     describeFailure: describeNeteaseFailure,
-    getAvailability: () => ({ configured: true }),
+    // 后端在哪决定这个平台能不能用：桌面版内嵌（Electron 桥），网页/自托管版由
+    // VITE_NETEASE_API_BASE 指过去。两者都没有时（独立 App 构建）configured 为 false——
+    // 界面据此不列出这个平台，而不是让用户点开看到一个必然失败的登录框。
+    getAvailability: () => (
+        typeof window !== 'undefined' && window.electron?.getNeteasePort
+            ? { configured: true } as const
+            : (getNeteaseRemoteApiBase()
+                ? { configured: true } as const
+                : { configured: false, reason: 'not-configured' as const })
+    ),
     capabilities: {
         search: true,
         playback: true,

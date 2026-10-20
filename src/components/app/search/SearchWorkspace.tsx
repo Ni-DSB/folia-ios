@@ -87,8 +87,8 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
     );
     const sources = useMemo<SearchSource[]>(() => {
         const online = omni.getProviderSummaries()
-            // 未配置的源（独立 App 里没有官方平台后端）搜不出任何东西，不进标签列；
-            // selfhost 与桌面版它们都是 configured，照常出现。
+            // 后端没有配置的平台（独立 App 里的官方平台）搜不出任何东西，不进标签列。
+            // 判断交给各平台自己的 availability，共享代码不需要知道是哪个平台。
             .filter(summary => summary.availability.configured !== false
                 && summary.availability.reason !== 'runtime-unavailable'
                 && (summary.requiresAccount === false || accountStatuses[summary.providerId]?.status === 'authenticated')

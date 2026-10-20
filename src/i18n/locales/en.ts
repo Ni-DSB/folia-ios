@@ -1309,6 +1309,7 @@ export default {
     "choosePlatform": "Choose a platform",
     "searchPlatforms": "Search platforms",
     "noPlatformMatch": "No matching platform",
+    "standaloneNoPlatforms": "This build has no platform accounts to sign in to (the NetEase/KuGou/QQ backends need a computer or a self-hosted server). Search from the search box instead — the source plugins are already bundled; switch between them with the tabs on top.",
     "rowSignedIn": "Signed in",
     "rowRanOut": "Sign-in expired",
     "rowSignedOut": "Not signed in",

@@ -1309,6 +1309,7 @@ export default {
     "choosePlatform": "Pilih platform",
     "searchPlatforms": "Cari platform",
     "noPlatformMatch": "Tidak ada platform yang cocok",
+    "standaloneNoPlatforms": "Versi ini tidak punya akun platform untuk login (backend NetEase/KuGou/QQ butuh komputer atau server sendiri). Cari langsung dari kotak pencarian — plugin sumber sudah disertakan, ganti dengan tab di atas.",
     "rowSignedIn": "Sudah login",
     "rowRanOut": "Login kedaluwarsa",
     "rowSignedOut": "Belum login",

@@ -32,10 +32,13 @@ const LoginHost: React.FC<LoginHostProps> = ({ account }) => {
     // 登录窗口只列「能登录、且值得登录」的平台：
     //   · 自定义音源（requiresAccount 为 false）不是登录对象——它们免登录，从搜索页的源标签用，
     //     出现在这一列只会让人以为也要登录；
-    //   · 后端未配置的平台（独立 App 里官方三平台的 Node 后端并不存在）点了只会报错，
-    //     不如不列出来。selfhost 与桌面版它们都是 configured，照常显示。
+    //   · 后端没配置的平台（独立 App 里那些依赖服务端的平台）点开只会失败，直接不列。
+    //     各平台自己的 availability 说了算，这里不点名具体平台。
     const loginable = useMemo(
-        () => providers.filter(provider => provider.requiresAccount !== false && provider.availability.configured !== false),
+        () => providers.filter(provider => (
+            provider.requiresAccount !== false
+            && provider.availability.configured !== false
+        )),
         [providers],
     );
     const rows = useMemo(() => orderRows(loginable, activeProviderId), [loginable, activeProviderId]);
