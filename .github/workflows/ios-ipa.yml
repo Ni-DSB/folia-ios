@@ -139,25 +139,51 @@ jobs:
       - name: Verify bundled-sources filenames are intact
         run: |
           set -euo pipefail
-          # 回归校验：清单(music-sources/manifest 或 public/bundled-sources/manifest.json)
-          # 里引用的文件名必须与 ipa 内实际文件名逐一对上，否则插件源在 iPhone 上会 404。
+          # 回归校验：清单(public/bundled-sources/manifest.json)里引用的文件名必须与 ipa 内
+          # 实际文件名逐一对上，否则插件源在 iPhone 上会 404。
+          #
+          # ditto 打包中文名时不设 zip 的 UTF-8 标志位（flag_bits & 0x800 == 0），Python 的
+          # zipfile 于是按 cp437 解码，得到乱码 —— 会让本校验误报「清单引用 猫耳FM.js 但包内
+          # 没有该文件」。所以这里对每个条目用原始字节再按 UTF-8 试解一次：谁解得通用谁。
           python3 - <<'PY'
+          import json
           import zipfile
+
           z = zipfile.ZipFile("Folia.ipa")
-          bs = [i for i in z.namelist() if "/bundled-sources/" in i and i.endswith(".js")]
+
+
+          def real_name(info):
+              """条目的真实文件名：优先 UTF-8 标志，其次按原始字节试 UTF-8，最后退回 zipfile 结果。"""
+              if info.flag_bits & 0x800:
+                  return info.filename
+              raw = info.filename.encode("cp437", errors="replace")
+              try:
+                  return raw.decode("utf-8")
+              except UnicodeDecodeError:
+                  return info.filename
+
+
+          names = [real_name(i) for i in z.infolist()]
+          bs = [n for n in names if "/bundled-sources/" in n and n.endswith(".js")]
           if not bs:
               raise SystemExit("ios-ipa: 包内没有 bundled-sources/*.js")
-          # 校验清单里的每个引用名都能在包里找到对应的实际文件
-          manifest = [i for i in z.namelist() if i.endswith("bundled-sources/manifest.json")]
-          import json
+
+          manifest = [n for n in names if n.endswith("bundled-sources/manifest.json")]
           if manifest:
               m = json.loads(z.read(manifest[0]).decode("utf-8"))
+              missing = []
               for s in m.get("sources", []):
                   f = s.get("file")
-                  if f and not any(n.endswith("/bundled-sources/" + f) for n in z.namelist()):
+                  if f and not any(n.endswith("/bundled-sources/" + f) for n in names):
+                      missing.append(f)
+              if missing:
+                  for f in missing:
                       print("  MISSING:", f)
-                      raise SystemExit(f"ios-ipa: 清单引用 {f}，但包内没有该文件")
+                  raise SystemExit("ios-ipa: 清单引用的文件在包内不存在: " + ", ".join(missing))
+              print("  manifest refs: " + str(len(m.get("sources", []))) + " all present")
           print("  packaged js: " + str(len(bs)) + ", all names OK")
+          for n in sorted(bs):
+              print("    " + n.rsplit("/", 1)[-1])
           PY
 
       - name: Upload IPA artifact
