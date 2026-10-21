@@ -27,6 +27,9 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 60
+    # 发布 Release 需要写权限；artifact 下载要登录，Release 资产可以匿名下载。
+    permissions:
+      contents: write
     env:
       # 只构建 Web 产物，不需要桌面端运行时。
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -163,3 +166,26 @@ jobs:
           name: Folia-ipa
           path: Folia.ipa
           retention-days: 14
+
+      # artifact 下载要登录 GitHub；Release 资产可以匿名下载，手机/Sideloadly 直接取。
+      # 用固定 tag `ios-latest` 覆盖更新，地址恒定：
+      #   https://github.com/<owner>/<repo>/releases/download/ios-latest/Folia.ipa
+      - name: Publish IPA to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="ios-latest"
+          cat > /tmp/release-notes.md <<EOF
+          未签名 IPA。用 Sideloadly / AltStore 以自备 Apple ID 签名后安装。
+
+          构建信息：
+          - 提交：${{ github.sha }}
+          - 引擎：应用内插件引擎（VITE_CUSTOM_SOURCE_ENGINE=local）
+          - 网络：CapacitorHttp 已启用（跨域请求走原生，不受 WKWebView CORS 限制）
+          - 后台播放：UIBackgroundModes=audio
+          EOF
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" Folia.ipa \
+            --title "Folia iOS (unsigned)" \
+            --notes-file /tmp/release-notes.md
