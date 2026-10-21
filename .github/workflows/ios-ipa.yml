@@ -124,10 +124,38 @@ jobs:
           rm -rf Payload Folia.ipa
           mkdir -p Payload
           cp -R "$APP" Payload/
-          # ipa 就是含 Payload/ 的 zip
-          zip -qry Folia.ipa Payload
+          # ipa 就是含 Payload/ 的 zip。
+          # 注意：不用系统的 zip。macOS 系统 `zip` 对中文文件名（built-sources 里的 猫耳FM.js）
+          # 可能按本地编码写坏（实测会变 GBK 乱码，导致清单里引用的文件名和包内文件名对不上、
+          # 该插件源加载 404）。ditto 是 Apple 为 .app/.ipa 打包的标准工具：
+          # 正确保留 UTF-8 文件名、POSIX 权限、符号链接与 codesign 元数据。
+          ditto -c -k --sequesterRsrc --keepParent Payload Folia.ipa
           ls -lh Folia.ipa
           du -sh Payload/App.app
+
+      - name: Verify bundled-sources filenames are intact
+        run: |
+          set -euo pipefail
+          # 回归校验：清单(music-sources/manifest 或 public/bundled-sources/manifest.json)
+          # 里引用的文件名必须与 ipa 内实际文件名逐一对上，否则插件源在 iPhone 上会 404。
+          python3 - <<'PY'
+          import zipfile
+          z = zipfile.ZipFile("Folia.ipa")
+          bs = [i for i in z.namelist() if "/bundled-sources/" in i and i.endswith(".js")]
+          if not bs:
+              raise SystemExit("ios-ipa: 包内没有 bundled-sources/*.js")
+          # 校验清单里的每个引用名都能在包里找到对应的实际文件
+          manifest = [i for i in z.namelist() if i.endswith("bundled-sources/manifest.json")]
+          import json
+          if manifest:
+              m = json.loads(z.read(manifest[0]).decode("utf-8"))
+              for s in m.get("sources", []):
+                  f = s.get("file")
+                  if f and not any(n.endswith("/bundled-sources/" + f) for n in z.namelist()):
+                      print("  MISSING:", f)
+                      raise SystemExit(f"ios-ipa: 清单引用 {f}，但包内没有该文件")
+          print("  packaged js: " + str(len(bs)) + ", all names OK")
+          PY
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
